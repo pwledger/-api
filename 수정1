@@ -225,10 +225,7 @@ class MyWindow(QMainWindow):
     def update_rsi_list_widget(self, stock_code, rsi):
         if 0 < rsi < 30:
             background_color = Qt.red 
-            # Play the sound
-            url = QUrl.fromLocalFile("alert.mp3")  # Replace with the path to your sound file
-            self.media_player.setMedia(QMediaContent(url))
-            self.media_player.play()
+
 
             # Show popup message 
             self.handle_alert(stock_code, rsi)
@@ -265,6 +262,10 @@ class MyWindow(QMainWindow):
         print(self.last_saved_time)
         # 마지막 저장이 3초 이내이면 데이터를 저장하지 않음
         if time_diff >= 30:
+            # Play the sound
+            url = QUrl.fromLocalFile("alert.mp3")  # Replace with the path to your sound file
+            self.media_player.setMedia(QMediaContent(url))
+            self.media_player.play()
             # 현재 시간 기록
             self.last_saved_time = current_time
 
