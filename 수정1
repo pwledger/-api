@@ -9,7 +9,6 @@ from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtGui import QClipboard  # 복사
 
 from collections import deque
-import numpy as np
 from datetime import datetime
 import time
 
@@ -142,9 +141,9 @@ class MyWindow(QMainWindow):
             item = QListWidgetItem(code)
             self.listWidget.addItem(item)  # ui 목록에 추가하는 법
             self.request_real_time_data(code)
-            if not self.price_data[code]:
+            if code not in self.price_data:
                self.price_data[code] = deque(maxlen=120)
-            if not self.price_data120[code]:
+            if code not in self.price_data120:
                 self.price_data120[code]= deque(maxlen=120)
 
 
@@ -208,14 +207,6 @@ class MyWindow(QMainWindow):
 
         return rsi
 
-    def calculate_rsi(self, prices):
-        deltas = np.diff(prices)
-        seed = deltas[:13]  # First 13
-        up = seed[seed >= 0].sum() / 14
-        down = -seed[seed < 0].sum() / 14
-        rs = up / down
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
 
     def update_list_widget(self, strCodeList):  # 업데이트 리스트 
         self.listWidget.clear()
