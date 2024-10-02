@@ -62,7 +62,7 @@ class MyWindow(QMainWindow):
         button_layout.addWidget(btn2)
         button_layout.addWidget(btn3)
 
-         # Add lists to list layout with titles
+        # Add lists to list layout with titles
         vertical_layout_left = QVBoxLayout()
         vertical_layout_left.addWidget(QLabel("Stock Codes"))
         vertical_layout_left.addWidget(self.listWidget)
@@ -135,7 +135,12 @@ class MyWindow(QMainWindow):
         if type == "D":
             #del self.price_data[code]
             #del self.price_data120[code]
-            row = self.listWidget.currentRow()  # 현재 선택된 항목의 인덱스
+            item_count = self.listWidget.count()
+            for i in range(item_count):
+                item = self.listWidget.item(i)  # i 번째 항목 가져오기
+                if item.text() == code:  # 항목의 텍스트가 code와 일치하는지 확인
+                    row = i
+                    break
             self.listWidget.takeItem(row)  # 해당 인덱스의 항목 삭제 
         elif type == "I":
             item = QListWidgetItem(code)
@@ -213,7 +218,7 @@ class MyWindow(QMainWindow):
         self.rsiListWidget.clear()
         self.rsiList30under.clear()
         codes = strCodeList.split(';')
-        print("개수" , len(codes))
+        print("개수" , len(codes)+1)
         for code in codes:
             if code:
                 item = QListWidgetItem(code)
