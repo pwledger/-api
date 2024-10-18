@@ -1,0 +1,27 @@
+from pykiwoom.kiwoom import Kiwoom
+
+# 키움 API 객체 생성 및 연결
+kiwoom = Kiwoom()
+kiwoom.CommConnect(block=True)  # 로그인
+
+# 계좌번호 가져오기
+accounts = kiwoom.GetLoginInfo("ACCNO")  # 계좌번호 리스트 가져오기
+account = accounts[1]  # 첫 번째 계좌 사용
+print(accounts)
+# 매수 주문
+def buy_stock(account, code, qty, price):
+    # SendOrder 매수 함수 호출
+    kiwoom.SendOrder(
+        "매수주문",  # 요청 이름
+        "1000",  # 화면 번호 (4자리 임의 숫자)
+        account,  # 계좌번호
+        1,  # 주문유형 (1: 신규 매수, 2: 신규 매도)
+        code,  # 종목코드
+        qty,  # 주문 수량
+        price,  # 주문 가격 (0이면 시장가 주문)
+        "03",  # 거래구분 (00: 지정가, 03: 시장가)
+        ""  # 원주문번호 (정정/취소 주문시 필요, 신규주문시 공백)
+    )
+
+# 매수 주문 실행
+buy_stock(account, "005930", 1, 0)  # 삼성전자 10주를 60,100원에 매수x
