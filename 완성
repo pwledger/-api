@@ -3,13 +3,13 @@ from PyQt5.QtWidgets import *
 from PyQt5.QAxContainer import *
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtMultimedia import QSound , QMediaPlayer , QMediaContent
+from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QUrl
 
 from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtGui import QClipboard  # 복사
 
 from collections import deque
-import numpy as np
 from datetime import datetime
 import time
 
@@ -17,6 +17,9 @@ import atexit
 import csv
 
 now = datetime.now()
+
+from pykiwoom.kiwoom import Kiwoom
+
 
 
 class MyWindow(QMainWindow):
@@ -34,9 +37,23 @@ class MyWindow(QMainWindow):
         self.ocx.OnReceiveRealData.connect(self._handler_real_data)
         self.CommConnect()
 
+        # 키움 API 객체 생성 및 연결
+        self.kiwoom = Kiwoom()
+        self.kiwoom.CommConnect(block=True)  # 로그인
+
+        # 계좌번호 가져오기
+        self.accounts = self.kiwoom.GetLoginInfo("ACCNO")  # 계좌번호 리스트 가져오기
+        self.account = self.accounts[1]  # 첫 번째 계좌 사용
+        self.buy_stock_dict = {}
+        print(self.accounts)
+
+        self.execution_price = None  # 체결 가격 저장용
+        
+
         btn1 = QPushButton("Condition Down")
         btn2 = QPushButton("Condition List")
         btn3 = QPushButton("Condition Send")
+        btn4 = QPushButton("Sell All")  # 일괄 매도 버튼
 
         self.listWidget = QListWidget()
         self.price_data = {}
@@ -62,10 +79,12 @@ class MyWindow(QMainWindow):
         button_layout.addWidget(btn1)
         button_layout.addWidget(btn2)
         button_layout.addWidget(btn3)
+        button_layout.addWidget(btn4)  # 일괄 매도 버튼 추가
 
-         # Add lists to list layout with titles
+        # Add lists to list layout with titles
         vertical_layout_left = QVBoxLayout()
-        vertical_layout_left.addWidget(QLabel("Stock Codes"))
+        self.label = QLabel("Stock Codes")
+        vertical_layout_left.addWidget(self.label)
         vertical_layout_left.addWidget(self.listWidget)
 
         vertical_layout_right = QVBoxLayout()
@@ -97,6 +116,7 @@ class MyWindow(QMainWindow):
         btn1.clicked.connect(self.GetConditionLoad)
         btn2.clicked.connect(self.GetConditionNameList)
         btn3.clicked.connect(self.send_condition)
+        btn4.clicked.connect(self.sell_all_stocks)  # 일괄 매도 버튼 클릭 이벤트 연결
         
         self.media_player = QMediaPlayer()
 
@@ -132,7 +152,27 @@ class MyWindow(QMainWindow):
         print("handler condition load", ret, msg)
 
     def _handler_real_condition(self, code, type, cond_name, cond_index): # 실시간
-        print(cond_name, code, type)
+        #print(cond_name, code, type)
+        if type == "D":
+            #del self.price_data[code]
+            #del self.price_data120[code]
+            item_count = self.listWidget.count()
+            for i in range(item_count):
+                item = self.listWidget.item(i)  # i 번째 항목 가져오기
+                if item.text() == code:  # 항목의 텍스트가 code와 일치하는지 확인
+                    row = i
+                    break
+            self.listWidget.takeItem(row)  # 해당 인덱스의 항목 삭제 
+        elif type == "I":
+            item = QListWidgetItem(code)
+            self.listWidget.addItem(item)  # ui 목록에 추가하는 법
+            self.request_real_time_data(code)
+            if code not in self.price_data:
+               self.price_data[code] = deque(maxlen=120)
+            if code not in self.price_data120:
+                self.price_data120[code]= deque(maxlen=120)
+        self.label.setText(f"Stock Codes {self.listWidget.count()}" )
+
 
     def _handler_tr_condition(self, sCrNo, strCodeList, strConditionName, nIndex, nNext):
         print(strCodeList, strConditionName)
@@ -143,7 +183,7 @@ class MyWindow(QMainWindow):
             current_price = self.ocx.dynamicCall("GetCommData(QString, QString, int, QString)", sTrCode, sRQName, 0, "현재가").strip()
             stock_code = self.ocx.dynamicCall("GetCommData(QString, QString, int, QString)", sTrCode, sRQName, 0, "종목코드").strip()
             self.price_data[stock_code]= [[float(current_price) ,0]]
-            self.price_data120[stock_code]= [[float(current_price) ,0]]
+            self.price_data120[stock_code]= [[float(current_price) ,0]] 
 
 
     def _handler_real_data(self, code, real_type, real_data):
@@ -152,15 +192,17 @@ class MyWindow(QMainWindow):
             volume = self.ocx.dynamicCall("GetCommRealData(QString, int)",code , 15)  # 거래량
 
             self.price_data[code].append([float(tick_price), volume])
-
-            if len(self.price_data[code]) >= 120:
+            #print(self.price_data[code])
+            self.sell_time(code , tick_price)
+            if len(self.price_data[code]) >= 60:  # 틱 값 조절 부분
                 r = self.price_data[code].pop()
+                print(r)
                 self.price_data120[code].append(r)
-                self.price_data[code] = deque(maxlen=121)
+                self.price_data[code] = deque(maxlen=121)  
  
             if len(self.price_data120[code]) >= 14:
                 rsi = self.calculate_rsi_one(code)
-                self.update_rsi_list_widget(code, rsi)
+                self.update_rsi_list_widget(code, rsi , tick_price)
                 self.price_data120[code].popleft()
 
     def calculate_rsi_one(self, code):
@@ -194,21 +236,14 @@ class MyWindow(QMainWindow):
 
         return rsi
 
-    def calculate_rsi(self, prices):
-        deltas = np.diff(prices)
-        seed = deltas[:13]  # First 13
-        up = seed[seed >= 0].sum() / 14
-        down = -seed[seed < 0].sum() / 14
-        rs = up / down
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
 
     def update_list_widget(self, strCodeList):  # 업데이트 리스트 
         self.listWidget.clear()
         self.rsiListWidget.clear()
         self.rsiList30under.clear()
         codes = strCodeList.split(';')
-        print("개수" , len(codes))
+        print("개수" , len(codes)+1)
+
         for code in codes:
             if code:
                 item = QListWidgetItem(code)
@@ -217,16 +252,11 @@ class MyWindow(QMainWindow):
                 self.price_data[code] = deque(maxlen=120)
                 self.price_data120[code] = deque(maxlen=120)
 
-    def update_rsi_list_widget(self, stock_code, rsi):
+    def update_rsi_list_widget(self, stock_code, rsi , tick_price):
         if 0 < rsi < 30:
             background_color = Qt.red 
-            # Play the sound
-            url = QUrl.fromLocalFile("alert.mp3")  # Replace with the path to your sound file
-            self.media_player.setMedia(QMediaContent(url))
-            self.media_player.play()
-
             # Show popup message 
-            self.handle_alert(stock_code, rsi)
+            self.handle_alert(stock_code, rsi , tick_price)
 
             for i in range(self.rsiList30under.count()):
                 item = self.rsiList30under.item(i)
@@ -254,12 +284,16 @@ class MyWindow(QMainWindow):
         item.setBackground(background_color)
         self.rsiListWidget.addItem(item)
 
-    def handle_alert(self, stock_code, rsi):
+    def handle_alert(self, stock_code, rsi , tick_price):
         current_time = time.time()  # 현재 시간을 초 단위로 얻기
         time_diff = current_time - self.last_saved_time
         print(self.last_saved_time)
         # 마지막 저장이 3초 이내이면 데이터를 저장하지 않음
         if time_diff >= 3:
+            # Play the sound
+            url = QUrl.fromLocalFile("alert.mp3")  # Replace with the path to your sound file
+            self.media_player.setMedia(QMediaContent(url))
+            self.media_player.play()
             # 현재 시간 기록
             self.last_saved_time = current_time
 
@@ -269,7 +303,24 @@ class MyWindow(QMainWindow):
 
             # Show popup message
             self.show_popup( f"The RSI for {stock_code} , Current RSI: {rsi:.2f}" , f"{stock_code}",)
+            # 매수 관련 
+            if stock_code in self.buy_stock_dict:
+                print("이미 매수한 종목 입니다")
+            else:
+                self.buy_stock(self.account, stock_code, 1, 0)
+                print("매수한 금액" ,tick_price , tick_price[1::])
+                self.buy_stock_dict[stock_code] = [1 , int(tick_price[1::])]
 
+    def sell_time(self, stock_code ,  tick_price):
+        if  stock_code in self.buy_stock_dict  and self.buy_stock_dict[stock_code][1]:
+            if int(self.buy_stock_dict[stock_code][1])*1.04 <= int(tick_price[1::]):
+                self.sell_stock(self.account, stock_code, 1, 0)
+                print("상승 매도 했습니다")
+                del self.buy_stock_dict[stock_code]
+            elif int(self.buy_stock_dict[stock_code][1])*0.98 >= int(tick_price[1::]):
+                self.sell_stock(self.account, stock_code, 1, 0)
+                print("하락으로 매도 했습니다")
+                del self.buy_stock_dict[stock_code]
 
     def display_rsi_history(self, item):
         self.rsiList30today.clear()
@@ -288,6 +339,15 @@ class MyWindow(QMainWindow):
         msg_box.setText(message)
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.setModal(True)  # 비모달로 설정
+
+        # 팝업 창 크기 조정
+        msg_box.resize(400, 300)  # 가로 400, 세로 300으로 크기 조정
+        
+        # 팝업 창 위치 조정 (예: 화면 중앙에 표시)
+        screen_geometry = QApplication.desktop().screenGeometry()
+        x = (screen_geometry.width() - msg_box.width()) // (2+len(self.msg_boxes))
+        y = (screen_geometry.height() - msg_box.height()) // (2+len(self.msg_boxes))
+        msg_box.move(x, y)
 
         # 팝업이 닫힐 때 리스트에서 제거
         msg_box.finished.connect(lambda: self.msg_boxes.remove(msg_box))
@@ -348,6 +408,54 @@ class MyWindow(QMainWindow):
         print(self.today_ris)
         save_data_to_csv(self.today_ris)
 
+    def buy_stock(self , account, code, qty, price):
+        # SendOrder 매수 함수 호출
+        self.kiwoom.SendOrder(
+            "매수주문",  # 요청 이름
+            "1000",  # 화면 번호 (4자리 임의 숫자)
+            account,  # 계좌번호
+            1,  # 주문유형 (1: 신규 매수, 2: 신규 매도)
+            code,  # 종목코드
+            qty,  # 주문 수량
+            price,  # 주문 가격 (0이면 시장가 주문)
+            "03",  # 거래구분 (00: 지정가, 03: 시장가)
+            ""  # 원주문번호 (정정/취소 주문시 필요, 신규주문시 공백)
+        )
+        return self.execution_price
+
+    def sell_stock(self , account, code, qty, price):
+        # SendOrder 매수 함수 호출
+        self.kiwoom.SendOrder(
+            "매수주문",  # 요청 이름
+            "1000",  # 화면 번호 (4자리 임의 숫자)
+            account,  # 계좌번호
+            2,  # 주문유형 (1: 신규 매수, 2: 신규 매도)
+            code,  # 종목코드
+            qty,  # 주문 수량
+            price,  # 주문 가격 (0이면 시장가 주문)
+            "03",  # 거래구분 (00: 지정가, 03: 시장가)
+            ""  # 원주문번호 (정정/취소 주문시 필요, 신규주문시 공백)
+        )
+    
+    def OnReceiveTrData(self, screen_no, rqname, trcode, recordname, prev_next, data_len, error_code, msg, splm_msg):
+        if rqname == "매수주문":
+            result_code = self.GetCommData(trcode, rqname, 0, "주문상태").strip()
+            if result_code == "체결":
+                # 체결 가격 가져오기
+                self.execution_price = self.GetCommData(trcode, rqname, 0, "체결가").strip()
+                print(f"체결 가격: {self.execution_price}")
+    def sell_all_stocks(self):
+        """
+        보유 중인 모든 종목을 일괄 매도하는 함수
+        """
+        for stock_code, details in list(self.buy_stock_dict.items()):
+            qty = details[0]  # 보유 수량
+            price = 0  # 시장가로 매도
+            print(f"매도 주문: 종목 코드={stock_code}, 수량={qty}")
+            self.sell_stock(self.account, stock_code, qty, price)
+            del self.buy_stock_dict[stock_code]  # 매도 후 해당 종목 삭제
+        print("모든 종목 매도 완료")
+    
 def save_data_to_csv(data, filename="price_data.csv"):
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = ["시간" , "종목" , "RSI"]
